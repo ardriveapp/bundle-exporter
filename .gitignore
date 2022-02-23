@@ -104,5 +104,6 @@ dist
 .tern-port
 
 # bundle
-bundle
-raw-bundle
+bundles/*
+!bundles/.gitkeep
+output

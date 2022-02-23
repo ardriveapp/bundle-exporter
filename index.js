@@ -1,8 +1,14 @@
 const Arbundles = require("arbundles");
-const { readFileSync, existsSync, mkdirSync, writeFileSync } = require("fs");
+const {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} = require("fs");
 
-const bundleFile = "./raw-bundle";
-const outputFolder = "./bundle";
+const inputFolder = "./bundles";
+const outputFolder = "./output";
 
 const unpackBundleFromFile = (file) => {
   const bundleTxData = readFileSync(file);
@@ -17,42 +23,70 @@ const unpackBundle = async (bundleTxData) => {
   return bundle;
 };
 
-const getEntities = (bundle) => {
-  return bundle.items.filter((item) =>
-    item.tags.some((tag) => tag.name === "Entity-Type")
-  );
+const getTxMetadata = (item) => JSON.parse(item.rawData.toString());
+
+const getTxTags = (item) =>
+  item.tags.reduce((prev, curr) => {
+    return {
+      ...prev,
+      [curr.name]: curr.value,
+    };
+  }, {});
+
+const getFileData = (bundle, dataTxId) => {
+  const file = bundle.items.find((item) => item.id === dataTxId);
+  return file ? file.rawData.toString() : undefined;
 };
 
-const getNameAndDataTxFromEntity = (entity) => {
-  const entityData = JSON.parse(entity.rawData.toString());
-  const { name, dataTxId } = entityData;
-
-  return { name, dataTxId };
-};
-
-const getFileData = (bundle, dataTx) => {
-  const file = bundle.items.find((item) => item.id === dataTx);
-  return file.rawData.toString();
-};
-
-const createOutputFolder = (outputFolder) => {
+const createOutputFolderFor = (bundleList) => {
+  // Create output folder if not exists
   if (!existsSync(outputFolder)) {
     mkdirSync(outputFolder);
   }
+
+  bundleList.forEach((name) => {
+    const outputFilePath = `${outputFolder}/${name}`;
+    if (!existsSync(outputFilePath)) {
+      mkdirSync(outputFilePath);
+    }
+  });
 };
 
-const run = async () => {
-  const bundle = await unpackBundleFromFile(bundleFile);
-  createOutputFolder(outputFolder);
+const getBundlesFiles = (bundlesFolder) =>
+  readdirSync(bundlesFolder).filter((file) => file !== ".gitkeep");
 
-  const entities = getEntities(bundle);
+const formatJSON = (object) => JSON.stringify(object, null, "\t");
 
-  entities.forEach((entity) => {
-    const { name, dataTxId } = getNameAndDataTxFromEntity(entity);
+const isMetadataTx = (item) => item.tags.some((tag) => tag.name === "ArFS");
 
-    const fileData = getFileData(bundle, dataTxId);
+const run = () => {
+  const bundleFiles = getBundlesFiles(inputFolder);
 
-    writeFileSync(`${outputFolder}/${name}`, fileData);
+  createOutputFolderFor(bundleFiles);
+
+  bundleFiles.forEach(async (bundleFileName) => {
+    const bundlePath = `${inputFolder}/${bundleFileName}`;
+    const bundle = await unpackBundleFromFile(bundlePath);
+
+    bundle.items.forEach((item) => {
+      const id = item.id;
+      const isMetadata = isMetadataTx(item);
+
+      const metadata = isMetadata ? getTxMetadata(item) : {};
+      const dataTxId = metadata.dataTxId;
+      const tags = getTxTags(item);
+      const output = { metadata, tags };
+
+      const outputPath = `${outputFolder}/${bundleFileName}`;
+      writeFileSync(`${outputPath}/${id}.json`, formatJSON(output));
+
+      if (dataTxId) {
+        const fileData = getFileData(bundle, dataTxId);
+        if (fileData) {
+          writeFileSync(`${outputPath}/${metadata.dataTxId}`, fileData);
+        }
+      }
+    });
   });
 };
 
