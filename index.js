@@ -1,93 +1,136 @@
-const Arbundles = require("arbundles");
+const arbundles = require("arbundles");
 const {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
+	createWriteStream,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	readdirSync,
+	writeFileSync,
 } = require("fs");
+//Needed as Arweave redirects with a 302
+const https = require('follow-redirects/https');
+const { exit } = require("process");
 
 const inputFolder = "./bundles";
 const outputFolder = "./output";
+const txIdRegex = /^(\w|-){43}$/;
 
-const unpackBundleFromFile = (file) => {
-  const bundleTxData = readFileSync(file);
-  return unpackBundle(bundleTxData);
-};
-
-const unpackBundle = async (bundleTxData) => {
-  const bundle = Arbundles.unbundleData(bundleTxData);
-
-  await bundle.verify();
-
-  return bundle;
-};
-
+const formatJSON = (object) => JSON.stringify(object, null, "\t");
+const isMetadataTx = (item) => item.tags.some((tag) => tag.name === "ArFS");
 const getTxMetadata = (item) => JSON.parse(item.rawData.toString());
+//Handle arguments from STDIN
+const myArgs = process.argv.slice(2);
 
-const getTxTags = (item) =>
-  item.tags.reduce((prev, curr) => {
-    return {
-      ...prev,
-      [curr.name]: curr.value,
-    };
-  }, {});
+const downloadBundle = (txId) => {
+	let reqURL = `https://arweave.net/${txId}`
+	//Need to promisify
+	return new Promise(function (resolve, reject) {
+		let promise = https.get(reqURL, (res) => {
+			const writeStream = createWriteStream(`${inputFolder}/${txId}`);
+			res.pipe(writeStream);
+			writeStream.on("finish", () => {
+				writeStream.close();
+				console.log("Bundle download finished");
+				resolve(promise)
+			});
+		});
+		promise.onerror = reject;
+	})
+}
 
-const getFileData = (bundle, dataTxId) => {
-  const file = bundle.items.find((item) => item.id === dataTxId);
-  return file ? file.rawData.toString() : undefined;
-};
+const checkTxArg = async (myArgs) => {
+	if (myArgs.length) {
+		if (myArgs[0].match(txIdRegex) != null) {
+			let txId = myArgs[0].match(txIdRegex)[0]
+			await downloadBundle(txId)
+		} else {
+			console.log('Invalid Arweave TX')
+			exit
+		}
+	}
+}
 
 const createOutputFolderFor = (bundleList) => {
-  // Create output folder if not exists
-  if (!existsSync(outputFolder)) {
-    mkdirSync(outputFolder);
-  }
+	// Create output folder if not exists
+	if (!existsSync(outputFolder)) {
+		mkdirSync(outputFolder);
+	}
 
-  bundleList.forEach((name) => {
-    const outputFilePath = `${outputFolder}/${name}`;
-    if (!existsSync(outputFilePath)) {
-      mkdirSync(outputFilePath);
-    }
-  });
+	bundleList.forEach((name) => {
+		const outputFilePath = `${outputFolder}/${name}`;
+		if (!existsSync(outputFilePath)) {
+			mkdirSync(outputFilePath);
+		}
+	});
 };
 
 const getBundlesFiles = (bundlesFolder) =>
-  readdirSync(bundlesFolder).filter((file) => file !== ".gitkeep");
+	readdirSync(bundlesFolder).filter((file) => file !== ".gitkeep");
 
-const formatJSON = (object) => JSON.stringify(object, null, "\t");
+const unpackBundle = async (bundleTxData) => {
+	const bundle = arbundles.unbundleData(bundleTxData);
 
-const isMetadataTx = (item) => item.tags.some((tag) => tag.name === "ArFS");
+	await bundle.verify();
 
-const run = () => {
-  const bundleFiles = getBundlesFiles(inputFolder);
+	return bundle;
+};
 
-  createOutputFolderFor(bundleFiles);
+const unpackBundleFromFile = (file) => {
+	const bundleTxData = readFileSync(file);
+	return unpackBundle(bundleTxData);
+};
 
-  bundleFiles.forEach(async (bundleFileName) => {
-    const bundlePath = `${inputFolder}/${bundleFileName}`;
-    const bundle = await unpackBundleFromFile(bundlePath);
+const getTxTags = (item) =>
+	item.tags.reduce((prev, curr) => {
+		return {
+			...prev,
+			[curr.name]: curr.value,
+		};
+	}, {});
 
-    bundle.items.forEach((item) => {
-      const id = item.id;
-      const isMetadata = isMetadataTx(item);
+const getFileData = (bundle, dataTxId) => {
+	const file = bundle.items.find((item) => item.id === dataTxId);
+	return file ? file.rawData.toString() : undefined;
+};
 
-      const metadata = isMetadata ? getTxMetadata(item) : {};
-      const dataTxId = metadata.dataTxId;
-      const tags = getTxTags(item);
-      const output = { metadata, tags };
+const run = async () => {
+	//Check arguments for a TxID
+	await checkTxArg(myArgs)
 
-      const outputPath = `${outputFolder}/${bundleFileName}`;
-      writeFileSync(`${outputPath}/${id}.json`, formatJSON(output));
+	const bundleFiles = getBundlesFiles(inputFolder);
+	//Check if there are bundles to unpack
+	if (!getBundlesFiles(inputFolder).length) {
+		console.log("No bundles provided")
+		return
+	}
+	createOutputFolderFor(bundleFiles);
 
-      if (dataTxId) {
-        const fileData = getFileData(bundle, dataTxId);
-        if (fileData) {
-          writeFileSync(`${outputPath}/${metadata.dataTxId}`, fileData);
-        }
-      }
-    });
-  });
+	bundleFiles.forEach(async (bundleFileName) => {
+		const bundlePath = `${inputFolder}/${bundleFileName}`;
+		const bundle = await unpackBundleFromFile(bundlePath);
+
+		bundle.items.forEach((item) => {
+			const id = item.id;
+			const isMetadata = isMetadataTx(item);
+			const metadata = isMetadata ? getTxMetadata(item) : {};
+			const dataTxId = metadata.dataTxId;
+			const tags = getTxTags(item);
+			const output = { metadata, tags };
+			const outputPath = `${outputFolder}/${bundleFileName}`;
+			//For each entity, outputs raw blob, blob tags inside a JSON and the metadata JSON
+			if (dataTxId) {
+				const fileData = getFileData(bundle, dataTxId);
+				if (fileData) {
+					writeFileSync(`${outputPath}/${metadata.dataTxId}`, fileData);
+					writeFileSync(`${outputPath}/${id}.json`, formatJSON(output));
+				}
+			} else {
+				writeFileSync(`${outputPath}/${id}.TAGS.json`, formatJSON(output));
+			}
+		});
+	});
+	console.log("Bundles unpacked on ./output folder");
 };
 
 run();
+
