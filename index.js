@@ -26,7 +26,7 @@ const downloadBundle = async (txId) => {
 	//Need to promisify
 	return new Promise(function (resolve, reject) {
 		let promise = https.get(reqURL, (res) => {
-			const writeStream = createWriteStream(`./bundles/${txId}`);
+			const writeStream = createWriteStream(`${inputFolder}/${txId}`);
 			res.pipe(writeStream);
 			writeStream.on("finish", () => {
 				writeStream.close();
@@ -39,7 +39,6 @@ const downloadBundle = async (txId) => {
 }
 
 const checkTxArg = async (myArgs) => {
-
 	if (myArgs.length) {
 		if (myArgs[0].match(txIdRegex) != null) {
 			let txId = myArgs[0].match(txIdRegex)[0]
@@ -95,7 +94,6 @@ const getFileData = (bundle, dataTxId) => {
 };
 
 const run = async () => {
-
 	//Check arguments for a TxID
 	await checkTxArg(myArgs)
 
