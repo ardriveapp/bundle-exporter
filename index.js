@@ -21,7 +21,7 @@ const getTxMetadata = (item) => JSON.parse(item.rawData.toString());
 //Handle arguments from STDIN
 const myArgs = process.argv.slice(2);
 
-const downloadBundle = async (txId) => {
+const downloadBundle = (txId) => {
 	let reqURL = `https://arweave.net/${txId}`
 	//Need to promisify
 	return new Promise(function (resolve, reject) {
