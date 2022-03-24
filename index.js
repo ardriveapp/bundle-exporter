@@ -131,8 +131,9 @@ const run = async () => {
 		dataItemsIterable.forEach((item) => {
 			const id = item.id;
 			const isMetadata = isMetadataTx(item);
+			const dataItemBuffer = getFileDataBuffer(bundlePath, item);
 			const metadata = isMetadata
-				? JSON.parse(getFileDataBuffer(bundlePath, item).toString())
+				? JSON.parse(dataItemBuffer.toString())
 				: {};
 			const dataTxId = metadata.dataTxId;
 			const tags = getTxTags(item);
@@ -140,12 +141,10 @@ const run = async () => {
 			const outputPath = `${outputFolder}/${bundleFileName}`;
 			//For each entity, outputs raw blob, blob tags inside a JSON and the metadata JSON
 			if (dataTxId) {
-				//const fileData = getFileData(bundle, dataTxId);
-				const fileData = getFileDataBuffer(bundlePath, item);
-				if (fileData) {
+				if (dataItemBuffer) {
 					writeFileSync(
 						`${outputPath}/${metadata.dataTxId}`,
-						fileData
+						dataItemBuffer
 					);
 					writeFileSync(
 						`${outputPath}/${id}.json`,
