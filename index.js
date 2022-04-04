@@ -20,14 +20,33 @@ const { exit } = require("process");
 const inputFolder = "./bundles";
 const outputFolder = "./output";
 const txIdRegex = /^(\w|-){43}$/;
+const startsWithArDriveRegex = /^ArDrive/;
 
 const formatJSON = (object) => JSON.stringify(object, null, "\t");
 const isMetadataTx = (item) => item.tags.some((tag) => tag.name === "ArFS");
+const isArFSDataTx = (item) => {
+	return (
+		!isMetadataTx(item) &&
+		item.tags.some(
+			(tag) =>
+				tag.name === "App-Name" &&
+				tag.value.match(startsWithArDriveRegex)
+		)
+	);
+};
 
 //Handle arguments from STDIN
 const myArgs = process.argv.slice(2);
 
 const downloadBundle = (txId) => {
+	if (existsSync(`${inputFolder}/${txId}`)) {
+		console.log(
+			`Bundle with txId ${txId} already exists in ${inputFolder}`
+		);
+		return;
+	}
+
+	console.log(`Downloading bundle with txId ${txId}...`);
 	let reqURL = `https://arweave.net/${txId}`;
 	//Need to promisify
 	return new Promise(function (resolve, reject) {
@@ -36,7 +55,7 @@ const downloadBundle = (txId) => {
 			res.pipe(writeStream);
 			writeStream.on("finish", () => {
 				writeStream.close();
-				console.log("Bundle download finished");
+				console.log(`Finished downloading bundle with txId ${txId}`);
 				resolve(promise);
 			});
 		});
@@ -96,7 +115,9 @@ const getTxTags = (item) =>
 
 const getFileDataBuffer = (bundlePath, dataItem) => {
 	const { dataOffset, dataSize } = dataItem;
-
+	console.log(
+		`... unpacking item data with size ${dataSize} at offset ${dataOffset}...`
+	);
 	const dataBuffer = Buffer.alloc(dataSize);
 	const fd = openSync(bundlePath);
 	readSync(fd, dataBuffer, 0, dataSize, dataOffset);
@@ -123,43 +144,110 @@ const run = async () => {
 
 	createOutputFolderFor(bundleFiles);
 
-	bundleFiles.forEach(async (bundleFileName) => {
+	const arFSDataTxIDToTagsMap = {};
+	const arFSDataTxIDToMetadataMap = {};
+
+	for await (const bundleFileName of bundleFiles) {
+		console.log(`Working on bundle with txId ${bundleFileName}...`);
 		const bundlePath = `${inputFolder}/${bundleFileName}`;
+		const outputPath = `${outputFolder}/${bundleFileName}`;
 		const stream = createReadStream(bundlePath);
 		const dataItemsIterable = await processStream.default(stream);
+		const dataItemCount = dataItemsIterable.length;
+		console.log(`Data item count:  ${dataItemCount}`);
 
+		let currentItemIndex = 0;
 		dataItemsIterable.forEach((item) => {
 			const id = item.id;
-			const isMetadata = isMetadataTx(item);
+			console.log(
+				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${id}...`
+			);
+			let tagsOutput = {
+				dataItemTxId: id,
+				tags: getTxTags(item),
+			};
+
 			const dataItemBuffer = getFileDataBuffer(bundlePath, item);
-			const metadata = isMetadata
-				? JSON.parse(dataItemBuffer.toString())
-				: {};
-			const dataTxId = metadata.dataTxId;
-			const tags = getTxTags(item);
-			const output = { metadata, tags };
-			const outputPath = `${outputFolder}/${bundleFileName}`;
-			//For each entity, outputs raw blob, blob tags inside a JSON and the metadata JSON
-			if (dataTxId) {
-				if (dataItemBuffer) {
+
+			// Write out a specialized .TAGS.json file when it's an ArFS dataTx
+			if (isArFSDataTx(item)) {
+				// If there's a metadata for this dataTx cached, write it out with tags and purge it
+				if (arFSDataTxIDToMetadataMap[id]) {
 					writeFileSync(
-						`${outputPath}/${metadata.dataTxId}`,
-						dataItemBuffer
+						`${outputPath}/${id}.TAGS.json`,
+						formatJSON({
+							...tagsOutput,
+							...arFSDataTxIDToMetadataMap[id],
+						})
 					);
-					writeFileSync(
-						`${outputPath}/${id}.json`,
-						formatJSON(output)
-					);
+					delete arFSDataTxIDToMetadataMap[dataTxId];
+				} else {
+					// Else cache the dataTx's tags for write out when the metadataTx appears later
+					`...Caching tags for dataTxID ${id}...`;
+					arFSDataTxIDToTagsMap[id] = tagsOutput;
 				}
 			} else {
+				// Write out ordinary data item tx tags
 				writeFileSync(
 					`${outputPath}/${id}.TAGS.json`,
-					formatJSON(output)
+					formatJSON(tagsOutput)
 				);
 			}
+
+			// Match ArFS metadata with an ArFS dataTx
+			if (isMetadataTx(item)) {
+				// Stub out private metadata if necessary
+				const isPrivate = item.tags.some(
+					(tag) =>
+						tag.name === "Drive-Privacy" && tag.value === "private"
+				);
+				const metadata = isPrivate
+					? { encrypted: "encrypted" }
+					: JSON.parse(dataItemBuffer.toString());
+
+				// If there's a dataTx seeking metadata for its tags, finally write them out
+				const dataTxId = metadata.dataTxId;
+				if (arFSDataTxIDToTagsMap[dataTxId]) {
+					writeFileSync(
+						`${outputPath}/${dataTxId}.TAGS.json`,
+						formatJSON({
+							...arFSDataTxIDToTagsMap[dataTxId],
+							metaDataItemTxId: id,
+							metadata,
+						})
+					);
+					delete arFSDataTxIDToTagsMap[dataTxId];
+				} else {
+					// Else enqueue the metadata for later output alongside the dataTx's tags
+					console.log(
+						`...Enqueuing metadata for dataTxID ${dataTxId}...`
+					);
+					arFSDataTxIDToMetadataMap[dataTxId] = {
+						metadataTxId: id,
+						metadata,
+					};
+				}
+			}
+
+			// Write out the data item data
+			writeFileSync(`${outputPath}/${id}`, dataItemBuffer);
 		});
-	});
-	console.log("Bundles unpacked on ./output folder");
+
+		// Cleanup any unexpected "orphans"
+		for (dataTxId of Object.keys(arFSDataTxIDToTagsMap)) {
+			orphanTags = arFSDataTxIDToTagsMap[dataTxId];
+			console.error(
+				`Writing out orphan tags for txId {${orphanTags.dataItemTxId}...`
+			);
+			writeFileSync(
+				`${outputPath}/${orphanTags.dataItemTxId}.TAGS.json`,
+				formatJSON(orphanTags)
+			);
+		}
+
+		// You could also write out dataTx tag files here for orphaned metadata
+	}
+	console.log("Bundles unpacked to ./output folder");
 };
 
 run();
