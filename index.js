@@ -194,43 +194,56 @@ const run = async () => {
 				);
 			}
 
-			// Match ArFS metadata with an ArFS dataTx
-			if (isMetadataTx(item)) {
+			// Discover and extract ArFS metadata if possible
+			const arFSMetadata = (() => {
+				if (!isMetadataTx(item)) {
+					return undefined;
+				}
 				// Stub out private metadata if necessary
 				const isPrivate = item.tags.some(
 					(tag) =>
 						tag.name === "Drive-Privacy" && tag.value === "private"
 				);
-				const metadata = isPrivate
+				return isPrivate
 					? { encrypted: "encrypted" }
 					: JSON.parse(dataItemBuffer.toString());
+			})();
 
+			// Match ArFS metadata with an ArFS dataTx
+			if (arFSMetadata) {
 				// If there's a dataTx seeking metadata for its tags, finally write them out
-				const dataTxId = metadata.dataTxId;
-				if (arFSDataTxIDToTagsMap[dataTxId]) {
-					writeFileSync(
-						`${outputPath}/${dataTxId}.TAGS.json`,
-						formatJSON({
-							...arFSDataTxIDToTagsMap[dataTxId],
-							metaDataItemTxId: id,
-							metadata,
-						})
-					);
-					delete arFSDataTxIDToTagsMap[dataTxId];
+				const dataTxId = arFSMetadata.dataTxId;
+				if (dataTxId) {
+					if (arFSDataTxIDToTagsMap[dataTxId]) {
+						writeFileSync(
+							`${outputPath}/${dataTxId}.TAGS.json`,
+							formatJSON({
+								...arFSDataTxIDToTagsMap[dataTxId],
+								metaDataItemTxId: id,
+								metadata: arFSMetadata,
+							})
+						);
+						delete arFSDataTxIDToTagsMap[dataTxId];
+					} else {
+						// Else enqueue the metadata for later output alongside the dataTx's tags
+						console.log(
+							`...Enqueuing metadata for dataTxID ${dataTxId}...`
+						);
+						arFSDataTxIDToMetadataMap[dataTxId] = {
+							metadataTxId: id,
+							metadata: arFSMetadata,
+						};
+					}
 				} else {
-					// Else enqueue the metadata for later output alongside the dataTx's tags
-					console.log(
-						`...Enqueuing metadata for dataTxID ${dataTxId}...`
-					);
-					arFSDataTxIDToMetadataMap[dataTxId] = {
-						metadataTxId: id,
-						metadata,
-					};
+					// Is a standalone metadata. Nothing to do.
 				}
 			}
 
 			// Write out the data item data
-			writeFileSync(`${outputPath}/${id}`, dataItemBuffer);
+			writeFileSync(
+				`${outputPath}/${id}`,
+				arFSMetadata ? formatJSON(arFSMetadata) : dataItemBuffer
+			);
 		});
 
 		// Cleanup any unexpected "orphans"
@@ -246,6 +259,7 @@ const run = async () => {
 		}
 
 		// You could also write out dataTx tag files here for orphaned metadata
+		// NOTE: This wouldn't make sense for folder metadata or an entity rename metadata
 	}
 	console.log("Bundles unpacked to ./output folder");
 };
