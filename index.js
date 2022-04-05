@@ -154,7 +154,7 @@ const run = async () => {
 		const stream = createReadStream(bundlePath);
 		const dataItemsIterable = await processStream.default(stream);
 		const dataItemCount = dataItemsIterable.length;
-		console.log(`Data item count:  ${dataItemCount}`);
+		console.log(`Data item count: ${dataItemCount}`);
 
 		let currentItemIndex = 0;
 		dataItemsIterable.forEach((item) => {
@@ -183,7 +183,7 @@ const run = async () => {
 					delete arFSDataTxIDToMetadataMap[dataTxId];
 				} else {
 					// Else cache the dataTx's tags for write out when the metadataTx appears later
-					`...Caching tags for dataTxID ${id}...`;
+					console.log(`...Caching tags for dataTxID ${id}...`);
 					arFSDataTxIDToTagsMap[id] = tagsOutput;
 				}
 			} else {
@@ -195,18 +195,20 @@ const run = async () => {
 			}
 
 			// Discover and extract ArFS metadata if possible
-			const arFSMetadata = (() => {
+			const { arFSMetadata, isPrivateArFSData } = (() => {
+				let isPrivateArFSData = false;
 				if (!isMetadataTx(item)) {
-					return undefined;
+					return { undefined, isPrivateArFSData };
 				}
 				// Stub out private metadata if necessary
-				const isPrivate = item.tags.some(
-					(tag) =>
-						tag.name === "Drive-Privacy" && tag.value === "private"
+				isPrivateArFSData = item.tags.some(
+					(tag) => tag.name === "Cipher"
 				);
-				return isPrivate
+
+				const arFSMetadata = isPrivateArFSData
 					? { encrypted: "encrypted" }
 					: JSON.parse(dataItemBuffer.toString());
+				return { arFSMetadata, isPrivateArFSData };
 			})();
 
 			// Match ArFS metadata with an ArFS dataTx
@@ -242,15 +244,17 @@ const run = async () => {
 			// Write out the data item data
 			writeFileSync(
 				`${outputPath}/${id}`,
-				arFSMetadata ? formatJSON(arFSMetadata) : dataItemBuffer
+				arFSMetadata && !isPrivateArFSData
+					? formatJSON(arFSMetadata)
+					: dataItemBuffer
 			);
 		});
 
 		// Cleanup any unexpected "orphans"
 		for (dataTxId of Object.keys(arFSDataTxIDToTagsMap)) {
 			orphanTags = arFSDataTxIDToTagsMap[dataTxId];
-			console.error(
-				`Writing out orphan tags for txId {${orphanTags.dataItemTxId}...`
+			console.log(
+				`Writing out orphan tags for txId ${orphanTags.dataItemTxId}...`
 			);
 			writeFileSync(
 				`${outputPath}/${orphanTags.dataItemTxId}.TAGS.json`,
