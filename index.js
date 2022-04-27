@@ -180,7 +180,7 @@ const run = async () => {
 							...arFSDataTxIDToMetadataMap[id],
 						})
 					);
-					delete arFSDataTxIDToMetadataMap[dataTxId];
+					delete arFSDataTxIDToMetadataMap[id];
 				} else {
 					// Else cache the dataTx's tags for write out when the metadataTx appears later
 					console.log(`...Caching tags for dataTxID ${id}...`);
