@@ -92,19 +92,6 @@ const createOutputFolderFor = (bundleList) => {
 const getBundlesFiles = (bundlesFolder) =>
 	readdirSync(bundlesFolder).filter((file) => file !== ".gitkeep");
 
-const unpackBundle = async (bundleTxData) => {
-	const bundle = arbundles.unbundleData(bundleTxData);
-
-	await bundle.verify();
-
-	return bundle;
-};
-
-const unpackBundleFromFile = (file) => {
-	const bundleTxData = readFileSync(file);
-	return unpackBundle(bundleTxData);
-};
-
 const getTxTags = (item) =>
 	item.tags.reduce((prev, curr) => {
 		return {
@@ -158,12 +145,12 @@ const run = async () => {
 
 		let currentItemIndex = 0;
 		dataItemsIterable.forEach((item) => {
-			const id = item.id;
+			const dataTxId = item.id;
 			console.log(
-				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${id}...`
+				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${dataTxId}...`
 			);
 			let tagsOutput = {
-				dataItemTxId: id,
+				dataItemTxId: dataTxId,
 				tags: getTxTags(item),
 			};
 
@@ -172,24 +159,24 @@ const run = async () => {
 			// Write out a specialized .TAGS.json file when it's an ArFS dataTx
 			if (isArFSDataTx(item)) {
 				// If there's a metadata for this dataTx cached, write it out with tags and purge it
-				if (arFSDataTxIDToMetadataMap[id]) {
+				if (arFSDataTxIDToMetadataMap[dataTxId]) {
 					writeFileSync(
-						`${outputPath}/${id}.TAGS.json`,
+						`${outputPath}/${dataTxId}.TAGS.json`,
 						formatJSON({
 							...tagsOutput,
-							...arFSDataTxIDToMetadataMap[id],
+							...arFSDataTxIDToMetadataMap[dataTxId],
 						})
 					);
-					delete arFSDataTxIDToMetadataMap[id];
+					delete arFSDataTxIDToMetadataMap[dataTxId];
 				} else {
 					// Else cache the dataTx's tags for write out when the metadataTx appears later
-					console.log(`...Caching tags for dataTxID ${id}...`);
-					arFSDataTxIDToTagsMap[id] = tagsOutput;
+					console.log(`...Caching tags for dataTxID ${dataTxId}...`);
+					arFSDataTxIDToTagsMap[dataTxId] = tagsOutput;
 				}
 			} else {
 				// Write out ordinary data item tx tags
 				writeFileSync(
-					`${outputPath}/${id}.TAGS.json`,
+					`${outputPath}/${dataTxId}.TAGS.json`,
 					formatJSON(tagsOutput)
 				);
 			}
@@ -221,7 +208,7 @@ const run = async () => {
 							`${outputPath}/${dataTxId}.TAGS.json`,
 							formatJSON({
 								...arFSDataTxIDToTagsMap[dataTxId],
-								metaDataItemTxId: id,
+								metaDataItemTxId: dataTxId,
 								metadata: arFSMetadata,
 							})
 						);
@@ -232,7 +219,7 @@ const run = async () => {
 							`...Enqueuing metadata for dataTxID ${dataTxId}...`
 						);
 						arFSDataTxIDToMetadataMap[dataTxId] = {
-							metadataTxId: id,
+							metadataTxId: dataTxId,
 							metadata: arFSMetadata,
 						};
 					}
@@ -243,7 +230,7 @@ const run = async () => {
 
 			// Write out the data item data
 			writeFileSync(
-				`${outputPath}/${id}`,
+				`${outputPath}/${dataTxId}`,
 				arFSMetadata && !isPrivateArFSData
 					? formatJSON(arFSMetadata)
 					: dataItemBuffer
