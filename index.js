@@ -145,12 +145,12 @@ const run = async () => {
 
 		let currentItemIndex = 0;
 		dataItemsIterable.forEach((item) => {
-			const dataTxId = item.id;
+			const txId = item.id;
 			console.log(
-				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${dataTxId}...`
+				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${txId}...`
 			);
 			let tagsOutput = {
-				dataItemTxId: dataTxId,
+				dataItemTxId: txId,
 				tags: getTxTags(item),
 			};
 
@@ -159,24 +159,24 @@ const run = async () => {
 			// Write out a specialized .TAGS.json file when it's an ArFS dataTx
 			if (isArFSDataTx(item)) {
 				// If there's a metadata for this dataTx cached, write it out with tags and purge it
-				if (arFSDataTxIDToMetadataMap[dataTxId]) {
+				if (arFSDataTxIDToMetadataMap[txId]) {
 					writeFileSync(
-						`${outputPath}/${dataTxId}.TAGS.json`,
+						`${outputPath}/${txId}.TAGS.json`,
 						formatJSON({
 							...tagsOutput,
-							...arFSDataTxIDToMetadataMap[dataTxId],
+							...arFSDataTxIDToMetadataMap[txId],
 						})
 					);
-					delete arFSDataTxIDToMetadataMap[dataTxId];
+					delete arFSDataTxIDToMetadataMap[txId];
 				} else {
 					// Else cache the dataTx's tags for write out when the metadataTx appears later
-					console.log(`...Caching tags for dataTxID ${dataTxId}...`);
-					arFSDataTxIDToTagsMap[dataTxId] = tagsOutput;
+					console.log(`...Caching tags for dataTxID ${txId}...`);
+					arFSDataTxIDToTagsMap[txId] = tagsOutput;
 				}
 			} else {
 				// Write out ordinary data item tx tags
 				writeFileSync(
-					`${outputPath}/${dataTxId}.TAGS.json`,
+					`${outputPath}/${txId}.TAGS.json`,
 					formatJSON(tagsOutput)
 				);
 			}
@@ -208,7 +208,7 @@ const run = async () => {
 							`${outputPath}/${dataTxId}.TAGS.json`,
 							formatJSON({
 								...arFSDataTxIDToTagsMap[dataTxId],
-								metaDataItemTxId: dataTxId,
+								metaDataItemTxId: txId,
 								metadata: arFSMetadata,
 							})
 						);
@@ -219,7 +219,7 @@ const run = async () => {
 							`...Enqueuing metadata for dataTxID ${dataTxId}...`
 						);
 						arFSDataTxIDToMetadataMap[dataTxId] = {
-							metadataTxId: dataTxId,
+							metadataTxId: txId,
 							metadata: arFSMetadata,
 						};
 					}
@@ -230,7 +230,7 @@ const run = async () => {
 
 			// Write out the data item data
 			writeFileSync(
-				`${outputPath}/${dataTxId}`,
+				`${outputPath}/${txId}`,
 				arFSMetadata && !isPrivateArFSData
 					? formatJSON(arFSMetadata)
 					: dataItemBuffer
