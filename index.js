@@ -115,18 +115,18 @@ const getFileDataBuffer = (bundlePath, dataItem) => {
 const run = async () => {
 	//Check arguments for a TxID
 	await checkTxArg(myArgs);
-
-	const txIdArg = myArgs[0].match(txIdRegex) ? myArgs[0] : undefined;
-
+	
 	let bundleFiles = getBundlesFiles(inputFolder);
+	
+	if (myArgs[0] != undefined) {
+		const txIdArg = myArgs[0].match(txIdRegex) ? myArgs[0] : undefined;
+		bundleFiles = bundleFiles.filter((path) => path.includes(txIdArg));
+	}
+
 	//Check if there are bundles to unpack
 	if (!getBundlesFiles(inputFolder).length) {
 		console.log("No bundles provided");
 		return;
-	}
-
-	if (txIdArg) {
-		bundleFiles = bundleFiles.filter((path) => path.includes(txIdArg));
 	}
 
 	createOutputFolderFor(bundleFiles);
