@@ -1,5 +1,5 @@
-const arbundles = require("arbundles");
-const processStream = require("arbundles/stream");
+const processStream = require("@dha-team/arbundles/stream");
+const file = require("@dha-team/arbundles/file");
 
 const {
 	createReadStream,
@@ -16,6 +16,8 @@ const {
 //Needed as Arweave redirects with a 302
 const https = require("follow-redirects/https");
 const { exit } = require("process");
+const { get } = require("http");
+const { Readable } = require("stream");
 
 const inputFolder = "./bundles";
 const outputFolder = "./output";
@@ -100,14 +102,14 @@ const getTxTags = (item) =>
 		};
 	}, {});
 
-const getFileDataBuffer = (bundlePath, dataItem) => {
+const getFileDataBuffer = (bundlePath, dataItem, bdiOffset) => {
 	const { dataOffset, dataSize } = dataItem;
-	console.log(
-		`... unpacking item data with size ${dataSize} at offset ${dataOffset}...`
-	);
+	// console.log(
+	// 	`... unpacking item data with size ${dataSize} at offset ${dataOffset}...`
+	// );
 	const dataBuffer = Buffer.alloc(dataSize);
 	const fd = openSync(bundlePath);
-	readSync(fd, dataBuffer, 0, dataSize, dataOffset);
+	readSync(fd, dataBuffer, 0, dataSize, dataOffset + (bdiOffset || 0));
 	closeSync(fd);
 	return dataBuffer;
 };
@@ -115,9 +117,9 @@ const getFileDataBuffer = (bundlePath, dataItem) => {
 const run = async () => {
 	//Check arguments for a TxID
 	await checkTxArg(myArgs);
-	
+
 	let bundleFiles = getBundlesFiles(inputFolder);
-	
+
 	if (myArgs[0] != undefined) {
 		const txIdArg = myArgs[0].match(txIdRegex) ? myArgs[0] : undefined;
 		bundleFiles = bundleFiles.filter((path) => path.includes(txIdArg));
@@ -139,22 +141,78 @@ const run = async () => {
 		const bundlePath = `${inputFolder}/${bundleFileName}`;
 		const outputPath = `${outputFolder}/${bundleFileName}`;
 		const stream = createReadStream(bundlePath);
+
+		// // unpack the dataitem
+		// const fileDataItem = new file.FileDataItem(bundlePath);
+		// console.log("fileDataItem", fileDataItem);
+
+		// const sigT = await fileDataItem.signatureType();
+		// console.log("sigT", sigT);
+		// const sig = await fileDataItem.signature();
+		// console.log("sig", sig);
+		// const id = await fileDataItem.id();
+		// console.log("id", id);
+		// const data = await fileDataItem.data();
+		// console.log("data", data);
+
 		const dataItemsIterable = await processStream.default(stream);
 		const dataItemCount = dataItemsIterable.length;
 		console.log(`Data item count: ${dataItemCount}`);
 
 		let currentItemIndex = 0;
-		dataItemsIterable.forEach((item) => {
+		dataItemsIterable.forEach(async (item) => {
 			const txId = item.id;
-			console.log(
-				`(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${txId}...`
-			);
+
+			// console.log(
+			// `(${++currentItemIndex}/${dataItemCount}) Unpacking data item with txId ${txId}...`
+			// );
+			const tags = getTxTags(item);
 			let tagsOutput = {
 				dataItemTxId: txId,
-				tags: getTxTags(item),
+				tags: tags,
 			};
-
+			let bdi;
 			const dataItemBuffer = getFileDataBuffer(bundlePath, item);
+
+			if (tags["Bundle-Format"] === "binary") {
+				// unbundle the BDI
+				console.log(`Unpacking binary data item with txId ${txId}...`);
+
+				bdi = await processStream.default(
+					Readable.from(dataItemBuffer)
+				);
+				bdi.forEach((bdiItem) => {
+					const bdiTxId = bdiItem.id;
+					const bdiTags = getTxTags(bdiItem);
+					const bdiDataItemBuffer = getFileDataBuffer(
+						bundlePath,
+						bdiItem,
+						item.dataOffset
+					);
+					// Write out the BDI tags
+					writeFileSync(
+						`${outputPath}/${bdiTxId}.TAGS.BDI.json`,
+						formatJSON({
+							dataItemTxId: bdiTxId,
+							tags: bdiTags,
+						})
+					);
+					// Write out the BDI data
+					writeFileSync(
+						`${outputPath}/${bdiTxId}`,
+						bdiDataItemBuffer
+					);
+				});
+			}
+			tagsOutput = {
+				...tagsOutput,
+				...bdi?.reduce((prev, curr) => {
+					return {
+						...prev,
+						[curr.id]: getTxTags(curr),
+					};
+				}, {}),
+			};
 
 			// Write out a specialized .TAGS.json file when it's an ArFS dataTx
 			if (isArFSDataTx(item)) {
@@ -170,7 +228,7 @@ const run = async () => {
 					delete arFSDataTxIDToMetadataMap[txId];
 				} else {
 					// Else cache the dataTx's tags for write out when the metadataTx appears later
-					console.log(`...Caching tags for dataTxID ${txId}...`);
+					// console.log(`...Caching tags for dataTxID ${txId}...`);
 					arFSDataTxIDToTagsMap[txId] = tagsOutput;
 				}
 			} else {
@@ -215,9 +273,9 @@ const run = async () => {
 						delete arFSDataTxIDToTagsMap[dataTxId];
 					} else {
 						// Else enqueue the metadata for later output alongside the dataTx's tags
-						console.log(
-							`...Enqueuing metadata for dataTxID ${dataTxId}...`
-						);
+						// console.log(
+						// 	`...Enqueuing metadata for dataTxID ${dataTxId}...`
+						// );
 						arFSDataTxIDToMetadataMap[dataTxId] = {
 							metadataTxId: txId,
 							metadata: arFSMetadata,
